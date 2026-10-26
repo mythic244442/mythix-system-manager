@@ -6,6 +6,7 @@ from .pages.overview  import OverviewMixin
 from .pages.history   import HistoryMixin
 from .pages.packages  import PackagesMixin
 from .pages.kernels   import KernelsMixin
+from .pages.services  import ServicesMixin
 from .pages.repos     import ReposMixin
 from .pages.security  import SecurityMixin
 from .pages.cleanup   import CleanupMixin
@@ -26,7 +27,7 @@ class AppBase(Gtk.Window):
         self._updates=[]; self._kernels=[]; self._repos=[]; self._pkgs=[]
         self._busy=False; self._last_update_count=-1
         self._security_widgets={}; self._security_updating=False
-        self._kernels_loaded=False; self._repos_loaded=False
+        self._kernels_loaded=False; self._services_loaded=False; self._repos_loaded=False
         self._pkgs_loaded=False; self._startup_loaded=False
         self._sysinfo_timer=None; self._pkg_search_pending=None
         self._settings=load_settings()
@@ -291,6 +292,7 @@ class AppBase(Gtk.Window):
         ]),
         ("SYSTEM", [
             ("kernels",  "Kernels",  "applications-engineering-symbolic"),
+            ("services", "Services", "preferences-system-symbolic"),
             ("repos",    "Repos",    "network-server-symbolic"),
             ("startup",  "Startup",  "media-playback-start-symbolic"),
             ("upgrade",  "Upgrade",  "go-up-symbolic"),
@@ -378,7 +380,7 @@ class AppBase(Gtk.Window):
             "overview":  self._build_overview_tab,
             "updates":   self._build_updates_tab,   "packages": self._build_packages_tab,
             "cleanup":   self._build_cleanup_tab,   "history":  self._build_history_tab,
-            "kernels":   self._build_kernels_tab,   "repos":    self._build_repos_tab,
+            "kernels":   self._build_kernels_tab,   "services": self._build_services_tab, "repos":    self._build_repos_tab,
             "startup":   self._build_startup_tab,   "upgrade":  self._build_upgrade_tab,
             "security":  self._build_security_tab,  "antivirus":self._build_antivirus_tab,
             "logs":      self._build_logs_tab,      "system":   self._build_sysinfo_tab,
@@ -626,11 +628,13 @@ class AppBase(Gtk.Window):
 
         self._cleanup_rows = {}
         items = [
-            ("apt_cache",   "APT Package Cache",    "/var/cache/apt/archives/",    "Clean cached .deb files — safe to delete",          self._do_apt_clean),
-            ("apt_orphans", "Orphaned Packages",     None,                          "Packages no longer needed by any dependency",        self._do_apt_autoremove),
-            ("old_kernels", "Old Kernel Packages",   None,                          "Installed kernels not currently running",            self._do_remove_old_kernels),
-            ("thumbnails",  "Thumbnail Cache",       "~/.cache/thumbnails/",        "Cached image previews — regenerated automatically",  self._do_clean_thumbnails),
-            ("trash",       "Trash",                 "~/.local/share/Trash/",       "Files in your trash bin",                            self._do_empty_trash),
+            ("apt_cache",    "APT Package Cache",       "/var/cache/apt/archives/",    "Clean cached .deb files — safe to delete",                      self._do_apt_clean),
+            ("apt_orphans",  "Orphaned Packages",        None,                          "Packages no longer needed by any dependency",                    self._do_apt_autoremove),
+            ("old_kernels",  "Old Kernel Packages",      None,                          "Purge old kernels (keeps running, GRUB default & newest)",       self._do_remove_old_kernels),
+            ("journal_logs", "Systemd Journal Logs",     "/var/log/journal/",           "Vacuum journald logs older than 7 days",                         self._do_vacuum_journal),
+            ("shader_cache", "GPU & Mesa Shader Cache",  "~/.cache/mesa_shader_cache",  "Clear Mesa & NVIDIA GL/Vulkan shader caches",                    self._do_clean_shaders),
+            ("thumbnails",   "Thumbnail Cache",          "~/.cache/thumbnails/",        "Cached image previews — regenerated automatically",              self._do_clean_thumbnails),
+            ("trash",        "Trash",                    "~/.local/share/Trash/",       "Files in your desktop user trash bin",                           self._do_empty_trash),
         ]
         for key, title, path, desc, cb in items:
             row = Gtk.Box(spacing=12)
@@ -669,10 +673,10 @@ class AppBase(Gtk.Window):
         bar.set_margin_start(8); bar.set_margin_end(8); bar.set_margin_top(6); bar.set_margin_bottom(6)
         self.btn_av_scan   = self._mkbtn("folder-saved-search-symbolic","Scan",self._on_av_scan)
         self.btn_av_update = self._mkbtn("system-software-update-symbolic","Update Definitions",self._on_av_update)
-        self.btn_av_path   = Gtk.Button(label="/home")
+        self._av_scan_path = USER_HOME
+        self.btn_av_path   = Gtk.Button(label=str(USER_HOME))
         self.btn_av_path.connect("clicked", self._on_av_pick_path)
         self.btn_av_path.get_style_context().add_class("toolbar-btn")
-        self._av_scan_path = Path.home()
         self.av_status_lbl = Gtk.Label(label="ClamAV status: checking…")
         self.av_status_lbl.set_halign(Gtk.Align.END)
         bar.pack_start(self.btn_av_scan,   False, False, 0)
@@ -778,8 +782,9 @@ class AppBase(Gtk.Window):
         fields = [
             ("hostname","Hostname"),("distro","Distro"),("kernel","Kernel"),
             ("uptime","Uptime"),("cpu_model","CPU"),("cpu_cores","Cores"),
-            ("cpu_usage","CPU Usage"),("gpu","GPU"),("ram","RAM"),
-            ("swap","Swap"),("load","Load Avg"),("processes","Processes"),
+            ("cpu_usage","CPU Usage"),("thermals","Thermals"),("gpu","GPU"),
+            ("vram","VRAM"),("ram","RAM"),("swap","Swap"),
+            ("load","Load Avg"),("processes","Processes"),
         ]
         for i,(key,lbl) in enumerate(fields):
             kl = Gtk.Label(label=lbl+":"); kl.set_halign(Gtk.Align.END)
@@ -861,7 +866,8 @@ class AppBase(Gtk.Window):
         self.stack.set_visible_child_name(pid)
         if   pid == "overview": self._refresh_overview(); self._start_dash_timer()
         elif pid == "packages" and not self._pkgs_loaded:    self._load_installed_pkgs()
-        elif pid == "kernels"  and not self._kernels_loaded: self._on_refresh_kernels()
+        elif pid == "kernels"  and not self._kernels_loaded:  self._on_refresh_kernels()
+        elif pid == "services" and not self._services_loaded: self._refresh_services()
         elif pid == "repos"    and not self._repos_loaded:   self._refresh_repos()
         elif pid == "startup"  and not self._startup_loaded: self._refresh_startup()
         elif pid == "security": self._refresh_security_status()
@@ -874,7 +880,7 @@ class AppBase(Gtk.Window):
 
     def _on_refresh_dispatch(self, *_):
         fns = {"updates": self._on_refresh,        "packages": self._load_installed_pkgs,
-               "kernels": self._on_refresh_kernels,"repos":    self._refresh_repos,
+               "kernels": self._on_refresh_kernels,"services": self._refresh_services, "repos":    self._refresh_repos,
                "security":self._refresh_security_status, "cleanup": self._refresh_cleanup_sizes,
                "startup": self._refresh_startup,   "logs":     self._on_log_fetch,
                "system":  self._refresh_sysinfo,   "upgrade":  self._upgrade_check_version,
@@ -925,8 +931,8 @@ class AppBase(Gtk.Window):
             self._tray.set_from_icon_name(ico); self._tray.set_tooltip_text(tt)
 
     def _send_notification(self, title, body):
-        try: subprocess.run(["notify-send",title,body,"--icon=system-software-update",
-                              f"--app-name={APP_NAME}"],timeout=10,capture_output=True)
+        try: run_as_user(["notify-send",title,body,"--icon=system-software-update",
+                          f"--app-name={APP_NAME}"],timeout=10)
         except Exception: pass
 
     def _background_check(self):
@@ -1018,7 +1024,7 @@ class AppBase(Gtk.Window):
 
 class SystemManager(
     CommandPaletteMixin, UpdatesMixin, OverviewMixin, HistoryMixin,
-    PackagesMixin, KernelsMixin, ReposMixin, SecurityMixin, CleanupMixin,
+    PackagesMixin, KernelsMixin, ServicesMixin, ReposMixin, SecurityMixin, CleanupMixin,
     AntivirusMixin, StartupMixin, LogsMixin, SysInfoMixin, UpgradeMixin,
     AppBase,
 ):
@@ -1028,7 +1034,7 @@ class SystemManager(
 def main():
     if os.geteuid()!=0:
         env_args=[]
-        for var in ("DISPLAY","XAUTHORITY","WAYLAND_DISPLAY","XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS"):
+        for var in ("DISPLAY","XAUTHORITY","WAYLAND_DISPLAY","XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS","SUDO_USER","SUDO_UID","LOGNAME","USER"):
             val=os.environ.get(var)
             if val: env_args+=[f"{var}={val}"]
         try: os.execvp("pkexec",["pkexec","env"]+env_args+[sys.executable]+sys.argv)

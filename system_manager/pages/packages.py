@@ -57,14 +57,20 @@ class PackagesMixin:
             cache=apt.Cache(); cache.open(None)
             cache.upgrade(dist_upgrade=False)
             upgradable={p.name for p in cache.get_changes() if p.is_upgradable}
+            held=set()
+            try:
+                held=set(subprocess.run(["apt-mark","showhold"],capture_output=True,
+                                        text=True,timeout=15).stdout.split())
+            except Exception: pass
             results=[]
             for name in sorted(cache.keys()):
                 if term.lower() not in name.lower(): continue
                 pkg=cache[name]
                 inst=pkg.installed; cand=pkg.candidate
                 if inst:
-                    status="upgradable" if name in upgradable else "installed"
-                    mark="▲" if status=="upgradable" else "●"
+                    if name in held:         status="held";       mark="⏸"
+                    elif name in upgradable: status="upgradable"; mark="▲"
+                    else:                    status="installed";  mark="●"
                     results.append([mark,name,inst.version,cand.version if cand else "",
                                     inst.summary or "",human_size(inst.installed_size),inst.installed_size,status])
                 elif cand:
@@ -156,7 +162,7 @@ class PackagesMixin:
     def _on_pkg_remove(self,*_):
         name,status=self._get_selected_pkg()
         if not name: return
-        if status not in ("installed","upgradable"):
+        if status not in ("installed","upgradable","held"):
             self._show_error("Not installed",f"{name} is not installed."); return
         d=Gtk.MessageDialog(transient_for=self,flags=0,message_type=Gtk.MessageType.WARNING,
                              buttons=Gtk.ButtonsType.YES_NO,text=f"Remove {name}?")

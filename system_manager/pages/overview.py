@@ -1,5 +1,6 @@
-"""Overview dashboard: stat cards, security score, sparkline."""
-from ..core import *  # shared imports (Gtk, GLib, subprocess, …) and constants
+"""Overview dashboard: stat cards, security score, sparkline + live thermals."""
+from ..core import *
+
 
 class OverviewMixin:
     # ────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ class OverviewMixin:
         frame.set_margin_start(12); frame.set_margin_end(12); frame.set_margin_bottom(6)
         hdr = Gtk.Box(spacing=12)
         hdr.set_margin_top(10); hdr.set_margin_start(14); hdr.set_margin_end(14)
-        t = Gtk.Label(label="LIVE — CPU / RAM", xalign=0)
+        t = Gtk.Label(label="LIVE — CPU / RAM / THERMALS", xalign=0)
         t.get_style_context().add_class("dash-eyebrow")
         self.spark_lbl = Gtk.Label(label="")
         self.spark_lbl.get_style_context().add_class("dash-sub")
@@ -99,16 +100,27 @@ class OverviewMixin:
 
     def _dash_cleanup_worker(self):
         total = 0
-        for p in ("/var/cache/apt/archives",
-                  str(Path.home() / ".cache" / "thumbnails"),
-                  str(Path.home() / ".local" / "share" / "Trash")):
+        paths = [
+            Path("/var/cache/apt/archives"),
+            USER_HOME / ".cache" / "thumbnails",
+            USER_HOME / ".local" / "share" / "Trash",
+            USER_HOME / ".cache" / "mesa_shader_cache",
+            USER_HOME / ".cache" / "mesa_shader_cache_db",
+            USER_HOME / ".nv" / "GLCache",
+            USER_HOME / ".cache" / "nvidia" / "GLCache",
+        ]
+        for p in paths:
+            if not p.exists():
+                continue
             try:
-                r = subprocess.run(["du", "-sb", p], capture_output=True, text=True, timeout=30)
-                if r.returncode == 0: total += int(r.stdout.split()[0])
-            except Exception: pass
+                r = subprocess.run(["du", "-sb", str(p)], capture_output=True, text=True, timeout=20)
+                if r.returncode == 0:
+                    total += int(r.stdout.split()[0])
+            except Exception:
+                pass
         def apply():
             self._dash["cleanup"]["value"].set_text(human_size(total))
-            self._dash["cleanup"]["sub"].set_text("apt cache · thumbnails · trash")
+            self._dash["cleanup"]["sub"].set_text("apt · shaders · thumbnails · trash")
         GLib.idle_add(apply)
 
     def _start_dash_timer(self):
@@ -138,7 +150,10 @@ class OverviewMixin:
             ram = 100.0 * (mem["MemTotal"] - mem["MemAvailable"]) / mem["MemTotal"]
             self._ram_hist.append(ram); self._ram_hist[:] = self._ram_hist[-90:]
             if self._cpu_hist:
-                self.spark_lbl.set_text(f"CPU {self._cpu_hist[-1]:.0f}%    RAM {ram:.0f}%")
+                tele = read_thermal_and_gpu_telemetry()
+                ct = f" ({tele['cpu_temp_c']:.0f}°C)" if tele.get("cpu_temp_c") is not None else ""
+                gt = f"    GPU {tele['gpu_temp_c']:.0f}°C" if tele.get("gpu_temp_c") is not None else ""
+                self.spark_lbl.set_text(f"CPU {self._cpu_hist[-1]:.0f}%{ct}{gt}    RAM {ram:.0f}%")
             self.spark.queue_draw()
         except Exception: pass
         return True
@@ -166,4 +181,3 @@ class OverviewMixin:
         plot(self._ram_hist, (0.70, 0.62, 0.86), False)  # amethyst = RAM
         plot(self._cpu_hist, ac, True)                   # accent   = CPU
         return False
-

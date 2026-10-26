@@ -141,7 +141,7 @@ class UpdatesMixin:
             h=json.loads(HISTORY_FILE.read_text()) if HISTORY_FILE.exists() else []
             h.append({"date":datetime.now().isoformat(),"packages":packages,"count":len(packages)})
             keep=max(50,int(self._settings.get("history_keep",200)))
-            HISTORY_FILE.write_text(json.dumps(h[-keep:],indent=2))
+            atomic_write_text(HISTORY_FILE, json.dumps(h[-keep:],indent=2))
         except Exception: pass
 
     def _on_fix_broken(self,*_):

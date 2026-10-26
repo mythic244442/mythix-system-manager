@@ -147,7 +147,9 @@ class SecurityMixin:
         except Exception as e:
             atomic_write_text(sshd, original)
             raise RuntimeError(f"sshd validation failed; restored original config (backup: {backup}): {e}")
-        subprocess.run(["systemctl","restart","sshd"],timeout=30)
+        r_ssh = subprocess.run(["systemctl","restart","ssh"],capture_output=True,timeout=30)
+        if r_ssh.returncode != 0:
+            subprocess.run(["systemctl","restart","sshd"],capture_output=True,timeout=30)
 
     def _toggle_ssh_root(self,e): self._edit_sshd("PermitRootLogin","no" if e else "yes")
     def _toggle_ssh_password(self,e): self._edit_sshd("PasswordAuthentication","no" if e else "yes")
@@ -174,7 +176,12 @@ class SecurityMixin:
                 lines=[l for l in lf.read_text().splitlines() if "Mythix System Manager" not in l and l.strip()!="* hard core 0"]
                 write_text_with_backup(lf, "\n".join(lines)+"\n", label="limits")
             remove_file_with_backup(sc, label="sysctl")
-            subprocess.run(["sysctl","-w","kernel.core_pattern=|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -- %E"],capture_output=True,timeout=10)
+            default_pattern = (
+                "|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -- %E"
+                if Path("/usr/share/apport/apport").exists()
+                else "core"
+            )
+            subprocess.run(["sysctl","-w",f"kernel.core_pattern={default_pattern}"],capture_output=True,timeout=10)
 
     def _toggle_sysrq(self,e):
         sc=Path("/etc/sysctl.d/99-mythix-sysrq.conf")

@@ -91,6 +91,23 @@ class SysInfoMixin:
                 else: info["swap"]="None"
             except Exception: info["ram"]="?"; info["swap"]="?"
             try:
+                tele = read_thermal_and_gpu_telemetry()
+                t_parts = []
+                if tele.get("cpu_temp_c") is not None:
+                    t_parts.append(f"CPU {tele['cpu_temp_c']:.1f}°C")
+                if tele.get("gpu_temp_c") is not None:
+                    t_parts.append(f"GPU {tele['gpu_temp_c']:.1f}°C")
+                info["thermals"] = "  ·  ".join(t_parts) if t_parts else "N/A"
+                if tele.get("vram_total_mb"):
+                    u_mb = tele.get("vram_used_mb") or 0
+                    t_mb = tele["vram_total_mb"]
+                    util = f" ({tele['gpu_util_pct']:.0f}% util)" if tele.get("gpu_util_pct") is not None else ""
+                    info["vram"] = f"{u_mb:.0f} MB / {t_mb:.0f} MB{util}"
+                else:
+                    info["vram"] = "Shared / Unified"
+            except Exception:
+                info["thermals"] = "?"; info["vram"] = "?"
+            try:
                 r=subprocess.run(["df","-h","--output=target,size,used,avail,pcent","-x","tmpfs","-x","devtmpfs"],
                     capture_output=True,text=True,timeout=5)
                 disks=[line.split() for line in r.stdout.splitlines()[1:] if line]

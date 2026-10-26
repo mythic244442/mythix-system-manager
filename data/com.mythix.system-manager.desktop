@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Mythix System Manager
+Comment=System manager for Linux Mint and Debian — updates, packages, kernels, services, security & logs
+Exec=mythix-system-manager
+Icon=preferences-system
+Terminal=false
+Type=Application
+Categories=System;Settings;PackageManager;
+Keywords=apt;updates;packages;kernels;services;security;cleanup;mint;debian;mythix;
+StartupNotify=true
